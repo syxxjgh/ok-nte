@@ -1,0 +1,123 @@
+name: Sync Upstream
+
+run-name: Sync upstream · ${{ github.event_name }}
+
+# fork 自动同步上游 BnanZ0/ok-nte: 定时(或手动)把 upstream/main 合并进 fork main,
+# 拍卖功能路径上的冲突自动保留 fork 侧, 其他冲突置为失败等人工处理;
+# 上游出现 fork 还没有的 vX.Y.Z release tag 时, 在合并结果上建同名 tag 推送,
+# 由 build.yml 自动构建对应的 fork release (含拍卖功能).
+# 注意: fork 里的定时 workflow 默认被 GitHub 停用, 需要在 Actions 页面手动启用.
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      skip_tag:
+        description: '只合并上游 main, 不为新的上游 release tag 建 fork tag'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  sync:
+    name: Merge upstream and mirror release tag
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure runner
+        run: |
+          git config --global user.name "sync-upstream-bot"
+          git config --global user.email "sync-upstream-bot@users.noreply.github.com"
+          git config --global core.autocrlf false
+
+      - name: Check out fork main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/BnanZ0/ok-nte.git
+          git fetch upstream main
+          git fetch upstream --tags --force
+
+      - name: Merge upstream main, keep auction on conflict
+        run: |
+          git config rerere.enabled true
+          $mergeOutput = git merge upstream/main --no-edit 2>&1 | Out-String
+          Write-Host $mergeOutput
+          if ($LASTEXITCODE -ne 0) {
+            $conflicted = @(git diff --name-only --diff-filter=U)
+            Write-Host "conflicted files: $($conflicted -join ', ')"
+            $needsManual = @()
+            foreach ($f in $conflicted) {
+              if ($f -eq 'src/tasks/AutoBidAuctionTask.py' -or $f.StartsWith('src/tasks/auction/')) {
+                git checkout --ours -- $f
+                if ($LASTEXITCODE -ne 0) { throw "git checkout --ours failed: $f" }
+                git add -- $f
+                Write-Host "auction path resolved with fork side: $f"
+              } else {
+                $needsManual += $f
+              }
+            }
+            if ($needsManual.Count -gt 0) {
+              Write-Host "::error::Merge conflicts outside auction paths need manual resolution: $($needsManual -join ', ')"
+              exit 1
+            }
+            git commit --no-edit
+            if ($LASTEXITCODE -ne 0) { throw 'merge commit failed' }
+          }
+          git log --oneline -3
+
+      - name: Check for new commits
+        id: changed
+        run: |
+          $ahead = git rev-list --count origin/main..HEAD
+          Write-Host "commits ahead of origin/main: $ahead"
+          "ahead=$ahead" >> $env:GITHUB_OUTPUT
+
+      - name: Push main
+        if: steps.changed.outputs.ahead != '0'
+        run: git push origin main
+
+      - name: Mirror newest upstream release tag
+        if: inputs.skip_tag != true
+        run: |
+          # 上游稳定 tag (vX.Y.Z) 中 fork 还没有的, 取版本号最新的一个,
+          # 强制建同名 tag 指向当前 main(已含上游内容+拍卖), 推送触发 build.yml.
+          $parseTags = {
+            param($lines)
+            $set = @{}
+            foreach ($line in $lines) {
+              $parts = $line -split "`t"
+              if ($parts.Count -eq 2 -and $parts[1] -match '^refs/tags/(v\d+\.\d+\.\d+)$') {
+                $set[$Matches[1]] = $true
+              }
+            }
+            return ,$set
+          }
+          $upSet = & $parseTags @(git ls-remote --tags upstream 'refs/tags/v*')
+          $ownSet = & $parseTags @(git ls-remote --tags origin 'refs/tags/v*')
+          $missing = @($upSet.Keys | Where-Object { -not $ownSet.ContainsKey($_) })
+          if ($missing.Count -eq 0) {
+            Write-Host 'no new upstream release tags; nothing to mirror'
+            return
+          }
+          $sorted = @($missing | Sort-Object { [version]($_.Substring(1)) })
+          $newest = $sorted[-1]
+          Write-Host "mirroring upstream release tag: $newest"
+          git tag -f $newest HEAD
+          git push origin "refs/tags/$newest"

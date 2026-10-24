@@ -235,9 +235,13 @@ config = {
         # ['src.ui.MyTab', 'MyTab'], #可选, 自定义UI, 显示在侧边栏
     ],
     "scene": ["src.scene.NTEScene", "NTEScene"],
+    # fork 不做启动器自升级: to_version 低于任何已装启动器版本, pyappify.upgrade
+    # 直接跳过; 避免应用内下载官方 ok-nte-win32.zip 覆盖掉带拍卖功能的 fork 构建.
+    # 需要更新启动器时重装 full 包, 或把 to_version 改为高于当前的版本并填
+    # fork 自己 release 的 zip_url 与 sha256.
     "update_pyappify": {
-        "to_version": "1.2.5",
-        "zip_url": "https://github.com/BnanZ0/ok-nte/releases/download/v1.4.14/ok-nte-win32.zip",
-        "sha256": "b9552c209d2b11bd4921e023387ff8a9ab6591c267b3677ae5472db65d1d7e73",
+        "to_version": "0.0.0",
+        "zip_url": "",
+        "sha256": "",
     },
 }

@@ -15,12 +15,15 @@ env:
   PYTHONFAULTHANDLER: '1'
   PYTHONIOENCODING: 'UTF-8'
   PYTHONLEGACYWINDOWSSTDIO: 'UTF-8'
-  SIGN_BUILD: 'true'
+  # fork 构建: 无 SignPath 凭据, 不签名; 每个版本重新构建启动器 EXE (未签名,
+  # SmartScreen 会提示, 个人自用可接受).
+  SIGN_BUILD: 'false'
   SIGN_SETUP: 'false'
   # Set to the final release API URL after preparing its launcher prerelease.
-  # An older release URL still reuses its EXE; empty builds a new EXE.
-  USE_RELEASE: 'https://api.github.com/repos/BnanZ0/ok-nte/releases/tags/v1.4.14'
-  SYNC_GITHUB_REPO: 'true'
+  # An older release URL reuses its EXE; empty builds a new EXE.
+  USE_RELEASE: ''
+  # fork 没有 Mirror酱 资源, 不触发 mirrorchyan 发布工作流.
+  ENABLE_MIRRORCHYAN: 'false'
 
 defaults:
   run:
@@ -40,8 +43,8 @@ jobs:
           [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
           git config --global core.autocrlf false
           git config --global core.eol lf
-          git config --global user.email "110257560+BnanZ0@users.noreply.github.com"
-          git config --global user.name "RU"
+          git config --global user.email "fork-release@users.noreply.github.com"
+          git config --global user.name "fork-release"
 
       - name: Check out source
         uses: actions/checkout@v7
@@ -148,9 +151,10 @@ jobs:
         id: sync
         uses: ok-oldking/partial-sync-repo@bbd55c1dffbcc1292a12295d949e7807b35ea93e
         with:
+          # fork 更新仓库: 存放应用源码, 启动器从这里 git pull 更新.
+          # 需要在 fork 仓库配置 secret SYNC_TOKEN (classic PAT, repo 权限).
           repos: |
-            https://cnb:${{ secrets.CNB_GH }}@cnb.cool/BnanZ0/ok-nte-update.git
-            ${{ env.SYNC_GITHUB_REPO == 'true' && format('https://BnanZ0:{0}@github.com/BnanZ0/ok-nte-update.git', secrets.OK_GH) || '' }}
+            https://syxxjgh:${{ secrets.SYNC_TOKEN }}@github.com/syxxjgh/ok-nte-update.git
           sync_list: 'deploy.txt'
           tag: ${{ github.ref_name }}
           gitignore_file: '.update_repo_gitignore'
@@ -216,7 +220,7 @@ jobs:
           fail_on_unmatched_files: true
 
       - name: Trigger MirrorChyan workflows
-        if: steps.release_version.outputs.is_release == 'true'
+        if: steps.release_version.outputs.is_release == 'true' && env.ENABLE_MIRRORCHYAN == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -275,17 +279,15 @@ jobs:
           body: |
             ### 更新日志 ${{ steps.sync.outputs.start_tag }} -> ${{ steps.sync.outputs.end_tag }}:
               ${{ steps.sync.outputs.changes_with_asterisk }}
+            ### fork 版本说明
+              本 fork 保留自动拍卖功能 (上游已移除), 仅自用.
             ### 下载包说明
-              * [ok-nte-win32-China-setup.exe](https://github.com/BnanZ0/ok-nte/releases/download/${{ github.ref_name }}/ok-nte-win32-China-setup.exe) 完整安装包, 更新使用阿里云+腾讯CNB.
-              * [ok-nte-win32-online-setup.exe](https://github.com/BnanZ0/ok-nte/releases/download/${{ github.ref_name }}/ok-nte-win32-online-setup.exe) 在线安装包, 在线白嫖的服务器不一定稳定, 建议优先使用完整包.
-              * [ok-nte-win-x86_64-${{ github.ref_name }}-full.zip](https://github.com/BnanZ0/ok-nte/releases/download/${{ github.ref_name }}/ok-nte-win-x86_64-${{ github.ref_name }}-full.zip) 完整便携压缩包, 包含启动器和程序本体, 解压后运行根目录的 ok-nte.exe, 更新使用 [Mirror酱](https://mirrorchyan.com/zh/get-start) (需要 CD-KEY).
-              * [ok-nte-win-x86_64-${{ github.ref_name }}-body.zip](https://github.com/BnanZ0/ok-nte/releases/download/${{ github.ref_name }}/ok-nte-win-x86_64-${{ github.ref_name }}-body.zip) 程序本体压缩包, 包含运行依赖, 解压后运行 ok-nte.exe, 不含更新启动器.
-              * [ok-nte-win32-Global-setup.exe](https://github.com/BnanZ0/ok-nte/releases/download/${{ github.ref_name }}/ok-nte-win32-Global-setup.exe) full package with dependencies, using GitHub and PyPi as update source
+              * [ok-nte-win32-China-setup.exe](https://github.com/syxxjgh/ok-nte/releases/download/${{ github.ref_name }}/ok-nte-win32-China-setup.exe) 完整安装包.
+              * [ok-nte-win32-online-setup.exe](https://github.com/syxxjgh/ok-nte/releases/download/${{ github.ref_name }}/ok-nte-win32-online-setup.exe) 在线安装包.
+              * [ok-nte-win-x86_64-${{ github.ref_name }}-full.zip](https://github.com/syxxjgh/ok-nte/releases/download/${{ github.ref_name }}/ok-nte-win-x86_64-${{ github.ref_name }}-full.zip) 完整便携压缩包, 包含启动器和程序本体, 解压后运行根目录的 ok-nte.exe.
+              * [ok-nte-win-x86_64-${{ github.ref_name }}-body.zip](https://github.com/syxxjgh/ok-nte/releases/download/${{ github.ref_name }}/ok-nte-win-x86_64-${{ github.ref_name }}-body.zip) 程序本体压缩包, 包含运行依赖, 解压后运行 ok-nte.exe, 不含更新启动器.
+              * [ok-nte-win32-Global-setup.exe](https://github.com/syxxjgh/ok-nte/releases/download/${{ github.ref_name }}/ok-nte-win32-Global-setup.exe) full package with dependencies, using GitHub and PyPi as update source
               * 不要下载ok-nte-win32.zip,和SourceCode.zip, Do Not Download the SourceCode, ok-nte-win32.zip
-            ### 如果无法下载或下载慢, 可以使用其他下载源
-              * [Mirror酱下载渠道](https://mirrorchyan.com/zh/projects?rid=ok-nte-zip&channel=stable), 国内网页直链, 下载需要购买CD-KEY, 已有Mirror酱CD-KEY可免费下载
-              * [百度网盘](https://pan.baidu.com/s/102Mh1djq2B1T-cIJhct9Gg?pwd=okww) 免费下载
-              * [夸克网盘](https://pan.quark.cn/s/24433f3febc1) 免费下载
           draft: false
           prerelease: false
           make_latest: true
