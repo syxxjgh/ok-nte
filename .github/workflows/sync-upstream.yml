@@ -46,7 +46,13 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          persist-credentials: true
+          persist-credentials: false
+
+      - name: Configure push access
+        run: |
+          # GITHUB_TOKEN 推送的事件不会触发其他 workflow (推了 tag 也不会跑 build),
+          # 必须用真实 PAT (SYNC_TOKEN) 推送, tag push 才能触发 Windows Release.
+          git remote set-url origin "https://syxxjgh:${{ secrets.SYNC_TOKEN }}@github.com/syxxjgh/ok-nte.git"
 
       - name: Fetch upstream
         run: |
@@ -118,6 +124,15 @@ jobs:
           }
           $sorted = @($missing | Sort-Object { [version]($_.Substring(1)) })
           $newest = $sorted[-1]
+          # 只跟进比 fork 已有版本更新的 release; 中间被跳过的版本不回放
+          # (它们的内容已包含在更新的合并里, 单独出包没有意义).
+          if ($ownSet.Count -gt 0) {
+            $ownLatest = (@($ownSet.Keys | Sort-Object { [version]($_.Substring(1)) }))[-1]
+            if ([version]($newest.Substring(1)) -lt [version]($ownLatest.Substring(1))) {
+              Write-Host "newest missing tag $newest is not newer than fork's latest $ownLatest; skip (no replay of intermediate releases)"
+              return
+            }
+          }
           Write-Host "mirroring upstream release tag: $newest"
           git tag -f $newest HEAD
           git push origin "refs/tags/$newest"
