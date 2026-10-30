@@ -92,6 +92,55 @@ class TestScrollbarThumbRatio(unittest.TestCase):
         self.assertIsNone(sell_red.scrollbar_thumb_ratio(frame, outside))
 
 
+class TestItemIdentity(unittest.TestCase):
+    GRID = Box(100, 200, 600, 300)
+
+    def test_same_item_same_identity_across_scroll(self):
+        # 同一件藏品: 滚动前在视口底部, 滚动后滑块下移、条目上移, 指纹不变。
+        before = sell_red.item_identity((300, 350), self.GRID, (0, 100, 400))
+        after = sell_red.item_identity((300, 200), self.GRID, (50, 100, 400))
+        self.assertIsNotNone(before)
+        self.assertEqual(before, after)
+
+    def test_different_items_different_identity(self):
+        first = sell_red.item_identity((300, 250), self.GRID, (0, 100, 400))
+        second = sell_red.item_identity((300, 350), self.GRID, (0, 100, 400))
+        self.assertNotEqual(first, second)
+
+    def test_none_geometry_returns_none(self):
+        self.assertIsNone(sell_red.item_identity((300, 250), self.GRID, None))
+
+    def test_x_bucket_absorbs_jitter(self):
+        first = sell_red.item_identity((302, 250), self.GRID, (0, 100, 400))
+        second = sell_red.item_identity((318, 250), self.GRID, (0, 100, 400))
+        self.assertEqual(first, second)
+
+
+class TestIdentityKnown(unittest.TestCase):
+    def test_exact_and_tolerance_match(self):
+        known = {(10, 0.50)}
+        self.assertTrue(sell_red.identity_known((10, 0.50), known))
+        self.assertTrue(sell_red.identity_known((10, 0.53), known))  # 容差内
+
+    def test_different_bucket_not_matched(self):
+        known = {(10, 0.50)}
+        self.assertFalse(sell_red.identity_known((11, 0.50), known))
+
+    def test_none_identity_never_known(self):
+        self.assertFalse(sell_red.identity_known(None, {(10, 0.5)}))
+
+
+class TestNameKnown(unittest.TestCase):
+    def test_substring_both_directions(self):
+        self.assertTrue(sell_red._name_known("霜铁交响", {"霜铁交响"}))
+        self.assertTrue(sell_red._name_known("霜铁", {"霜铁交响"}))  # OCR 丢字
+        self.assertTrue(sell_red._name_known("霜铁交响曲", {"霜铁交响"}))  # OCR 多字
+
+    def test_unknown_name(self):
+        self.assertFalse(sell_red._name_known("白龙王", {"霜铁交响"}))
+        self.assertFalse(sell_red._name_known("", {"霜铁交响"}))
+
+
 class TestShouldSellItem(unittest.TestCase):
     def test_none_price_keeps(self):
         self.assertFalse(sell_red.should_sell_item(None, 500000))

@@ -85,6 +85,13 @@ GAIN_POPUP_TIMEOUT = 3.0
 SKIP_RADIUS_FRACTION = 0.03
 SKIP_RADIUS_MIN = 20.0
 
+# 藏品位置指纹参数: 横向按 30px 桶化(聚类质心抖动约 +-2px), 纵向绝对位置
+# 允许 +-0.04 视口高(约 30px@1080p)的滚动条量化误差。指纹命中的候选直接
+# 跳过, 不再点开详情 —— 保留过的高价物品不会被重复选中 (用户 2026-10-30
+# 反馈: 名字去重仍会重复点开)。
+RED_IDENTITY_X_BUCKET = 30
+RED_IDENTITY_TOLERANCE = 0.04
+
 # 单次扫描的兜底处理件数上限: 防详情面板识别失灵时的死循环; 正常仓库
 # (200 格上限)即使全红也到不了这个数。
 RED_SCAN_MAX_ITEMS = 200
@@ -113,10 +120,9 @@ def red_item_clusters(frame, box: Box) -> list[tuple[int, int]]:
     return clusters
 
 
-def scrollbar_thumb_ratio(frame, box: Box) -> float | None:
-    """滚动条滑块底部相对轨道底部的位置: 0=在最顶, 1=完全到底。
+def scrollbar_geometry(frame, box: Box) -> tuple[int, int, int] | None:
+    """读取滚动条几何: (滑块顶, 滑块高, 轨道高), 单位像素(框内, 轨道顶为 0)。
 
-    frame 是整屏 BGR 帧, box 是滚动条条带 (boxes.warehouse_scrollbar)。
     滑块是暗轨道上的浅灰竖条(2026-10-28 截图实测 RGB~185), 轨道两端各有一
     小段亮端帽; 全部亮行的极值即轨道范围, 最长的亮段是滑块。找不到轨道或
     滑块(弹窗遮挡/不在仓库界面)返回 None, 调用方按「读不出」回退固定屏数。
@@ -131,7 +137,8 @@ def scrollbar_thumb_ratio(frame, box: Box) -> float | None:
     if rows.size < SCROLLBAR_TRACK_MIN_HEIGHT:
         return None
     track_top, track_bottom = int(rows[0]), int(rows[-1])
-    if track_bottom - track_top < SCROLLBAR_TRACK_MIN_HEIGHT:
+    track_height = track_bottom - track_top + 1
+    if track_height < SCROLLBAR_TRACK_MIN_HEIGHT:
         return None
     # 最长连续亮段 = 滑块 (端帽是两小段, 滑块明显更长)。
     best_top = best_bottom = -1
@@ -147,7 +154,65 @@ def scrollbar_thumb_ratio(frame, box: Box) -> float | None:
         best_top, best_bottom = run_start, track_bottom
     if best_bottom - best_top + 1 < SCROLLBAR_THUMB_MIN_HEIGHT:
         return None
-    return (best_bottom - track_top) / (track_bottom - track_top)
+    return best_top - track_top, best_bottom - best_top + 1, track_height
+
+
+def scrollbar_thumb_ratio(frame, box: Box) -> float | None:
+    """滚动条滑块底部相对轨道底部的位置: 0=在最顶, 1=完全到底。
+
+    frame 是整屏 BGR 帧, box 是滚动条条带 (boxes.warehouse_scrollbar)。
+    几何读不出时返回 None, 调用方按「读不出」回退固定屏数。
+    纯计算无 IO, 合成帧可直接单测。
+    """
+    geometry = scrollbar_geometry(frame, box)
+    if geometry is None:
+        return None
+    thumb_top, thumb_height, track_height = geometry
+    return (thumb_top + thumb_height - 1) / (track_height - 1)
+
+
+def item_identity(
+    center: tuple[int, int], grid: Box, geometry: tuple[int, int, int] | None
+) -> tuple[int, float] | None:
+    """条目在列表中的绝对位置指纹: (横向桶, 以视口高为单位的纵向绝对位置)。
+
+    纵向按滚动条几何换算: 内容偏移(视口数) = 滑块顶/滑块高, 加上条目在
+    视口内的分数位置 —— 同一藏品在任意滚动状态下指纹一致, 是「不再选中
+    已保留物品」的依据 (名字 OCR 会抖, 位置指纹不会)。横向滚动不改变,
+    按 30px 桶化吸收聚类质心抖动。几何读不出时返回 None, 调用方回落到
+    名字 + 屏内坐标去重。
+    """
+    if geometry is None:
+        return None
+    thumb_top, thumb_height, _track_height = geometry
+    if thumb_height <= 0 or grid.height <= 0:
+        return None
+    offset_views = thumb_top / thumb_height
+    view_frac = (center[1] - grid.y) / grid.height
+    return (int(center[0] // RED_IDENTITY_X_BUCKET), round(offset_views + view_frac, 3))
+
+
+def identity_known(identity: tuple[int, float] | None, known: set) -> bool:
+    """指纹是否已在保留集合里; 纵向允许 RED_IDENTITY_TOLERANCE 的量化误差。"""
+    if identity is None:
+        return False
+    x_bucket, position = identity
+    return any(
+        x_bucket == known_bucket and abs(position - known_position) <= RED_IDENTITY_TOLERANCE
+        for known_bucket, known_position in known
+    )
+
+
+def _name_known(name: str, skipped_names: set) -> bool:
+    """名字是否已在保留集合里; 双向包含匹配吸收 OCR 丢字/多字的抖动。
+
+    空名直接返回 False: 空串是任何串的子串, 会把所有保留名误判命中。
+    """
+    if not name:
+        return False
+    return any(
+        known and (name in known or known in name) for known in skipped_names
+    )
 
 
 def should_sell_item(price: int | None, limit: int) -> bool:
@@ -293,11 +358,13 @@ def sell_small_red_items(
 ) -> int | None:
     """扫描整个藏品仓库, 出售单价低于 price_limit 的红色藏品, 返回出售件数。
 
-    必须在藏品仓库普通视图 (未点出售圆钮) 调用; 出售成功后列表回流, 当前屏
-    重扫; 跳过的件按名称去重 (读不到名称按屏内坐标, 出售/滚动后坐标作废)。
-    流程走完返回出售件数 (0 也算走完); 「确认出售后面板未收起」这类结果
-    未知的情况返回 None, 由调用方按「结果未知」处理。TaskDisabledException
-    原样上抛, 其余异常兜住记日志并返回 None。
+    必须在藏品仓库普通视图 (未点出售圆钮) 调用。判定为保留的件记「位置指纹」
+    (滚动条几何换算的列表绝对位置, 见 item_identity) 与名字, 后续屏再次出现时
+    直接跳过不点开 (2026-10-30 用户反馈: 只靠名字去重仍会重复点开保留件)。
+    滚动条几何读不出时回落到屏内坐标 + 名字去重。流程走完返回出售件数 (0 也算
+    走完); 「确认出售后面板未收起」这类结果未知的情况返回 None, 由调用方按
+    「结果未知」处理。TaskDisabledException 原样上抛, 其余异常兜住记日志并返回
+    None。
     """
     if price_limit <= 0:
         task.log_warning(f"「小红出售价格上限」为 {price_limit}, 跳过本次出售小红扫描")
@@ -307,6 +374,7 @@ def sell_small_red_items(
     skip_radius = max(SKIP_RADIUS_MIN, boxes.warehouse_grid.height * SKIP_RADIUS_FRACTION)
     skipped_names: set[str] = set()
     skipped_points: list[tuple[int, int]] = []
+    skipped_ids: set[tuple[int, float]] = set()
     sold = 0
     processed = 0
     try:
@@ -329,8 +397,22 @@ def sell_small_red_items(
                 if budget.expired() or processed >= RED_SCAN_MAX_ITEMS:
                     break
                 task.next_frame()
-                clusters = red_item_clusters(task.frame, boxes.warehouse_grid)
-                center = pick_unvisited(clusters, skipped_points, skip_radius)
+                frame = task.frame
+                clusters = red_item_clusters(frame, boxes.warehouse_grid)
+                geometry = scrollbar_geometry(frame, boxes.warehouse_scrollbar)
+                # 选第一个「屏内坐标未跳过 且 位置指纹未保留」的候选;
+                # 指纹命中说明是保留过的物品, 不点开直接略过。
+                center = None
+                identity = None
+                for candidate in clusters:
+                    if any(_distance(candidate, point) <= skip_radius for point in skipped_points):
+                        continue
+                    ident = item_identity(candidate, boxes.warehouse_grid, geometry)
+                    if identity_known(ident, skipped_ids):
+                        continue
+                    center = candidate
+                    identity = ident
+                    break
                 if center is None:
                     break
                 processed += 1
@@ -346,7 +428,10 @@ def sell_small_red_items(
                     skipped_points.append(center)
                     continue
                 name = _read_detail_name(task, boxes)
-                if name and name in skipped_names:
+                if name and _name_known(name, skipped_names):
+                    # 名字去重的兜底路径 (指纹读不出时的第二道防线)。
+                    if identity is not None:
+                        skipped_ids.add(identity)
                     _close_detail_popup(task, boxes)
                     skipped_points.append(center)
                     continue
@@ -363,13 +448,22 @@ def sell_small_red_items(
                     # 提示条是模态的, 必须先关掉再继续扫 (不关会挡住全部点击)。
                     _dismiss_gain_popup(task, boxes)
                     skipped_points = []  # 列表回流, 当前屏坐标全部作废重扫
+                    # 卖出件下方的条目整体上移, 它们的纵向指纹全部失效;
+                    # 只保留卖出点之上(不受回流影响)的指纹, 名字集合不受影响。
+                    if identity is not None:
+                        skipped_ids = {
+                            key for key in skipped_ids if key[1] <= identity[1] + 0.001
+                        }
                     continue
                 task.log_info(
                     f"红色藏品「{name or '未识别名称'}」单价 "
                     f"{price if price is not None else '未读出'}, 不低于 {price_limit}, 保留"
                 )
+                # 保留: 名字与位置指纹都记, 名字读不出也靠指纹挡住后续重选。
                 if name:
                     skipped_names.add(name)
+                if identity is not None:
+                    skipped_ids.add(identity)
                 _close_detail_popup(task, boxes)
                 skipped_points.append(center)
             # 本屏处理完先看滚动条: 滑块贴底 = 最后一屏也已处理, 整仓扫完收尾。
