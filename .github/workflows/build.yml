@@ -24,8 +24,6 @@ env:
   USE_RELEASE: ''
   # fork 没有 Mirror酱 资源, 不触发 mirrorchyan 发布工作流.
   ENABLE_MIRRORCHYAN: 'false'
-  # 上游新增开关: fork 有自己的 GitHub 更新源 (syxxjgh/ok-nte-update, build 时
-  # 自动同步), 视为已同步 —— Global 安装包保留、发布说明不做"同步已禁用"处理。
   SYNC_GITHUB_REPO: 'true'
 
 defaults:
