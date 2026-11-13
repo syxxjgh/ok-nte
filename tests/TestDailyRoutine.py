@@ -31,9 +31,7 @@ class TestDailyRoutineConfig(unittest.TestCase):
 
         items = task.normalize_items()
 
-        # fork 修正(2026-11-12): 上游 65def6f 后条目表已无 anomaly_pilgrimage,
-        # 首条默认启用项是 daily_anomaly, 原断言在上游 v1.5.3 即已失败。
-        self.assertEqual(items[0], {"id": "daily_anomaly", "enabled": True})
+        self.assertEqual(items[0], {"id": "anomaly_pilgrimage", "enabled": False})
         self.assertEqual([item for item in items if item["id"] in {"daily_claim", "coffee"}], saved)
         claim_index = items.index(saved[0])
         self.assertEqual(
