@@ -1,4 +1,4 @@
-"""Project overrides for the ok-script dark palette."""
+"""Project overrides for the ok-script theme and widgets."""
 
 import re
 

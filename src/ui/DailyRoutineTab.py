@@ -1,5 +1,5 @@
 from ok.ui.qt.Communicate import communicate
-from ok.ui.qt.kit import Button, Card, Label, Pill, SettingRow, icon
+from ok.ui.qt.kit import Button, Card, Label, Pill, SettingRow, Table, icon
 from ok.ui.qt.kit.theme import rgba, set_style_property, theme
 from ok.ui.qt.tasks.config_form import ConfigForm
 from ok.ui.qt.tasks.tasks_page import start_task, stop_task
@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
-    QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -300,7 +299,7 @@ class DailyRoutineTab(CustomTab):
         self.routine_scroll = self._scroll_area()
         self.pages.addWidget(self.task_scroll)
         self.pages.addWidget(self.routine_scroll)
-        self.info_table = QTableWidget(0, 2)
+        self.info_table = Table(0, 2)
         self.info_table.setHorizontalHeaderLabels(
             [QCoreApplication.translate("TaskTab", text) for text in ("Info", "Value")]
         )
@@ -356,7 +355,7 @@ class DailyRoutineTab(CustomTab):
         return scroll
 
     @property
-    def name(self):
+    def name(self):  # type: ignore
         return self.tr_name
 
     @property

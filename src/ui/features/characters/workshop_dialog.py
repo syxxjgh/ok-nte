@@ -7,7 +7,17 @@ from typing import cast
 
 from ok.ui.qt.kit import Button, Card, ComboBox, Dialog, Label, ProgressRing, icon, theme
 from ok.ui.qt.kit.theme import set_style_property
-from PySide6.QtCore import QEvent, QObject, QPoint, QSignalBlocker, QSize, Qt, Signal
+from PySide6.QtCore import (
+    QCoreApplication,
+    QEvent,
+    QObject,
+    QPoint,
+    QSignalBlocker,
+    QSize,
+    Qt,
+    QThread,
+    Signal,
+)
 from PySide6.QtGui import QAction, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -42,13 +52,13 @@ from src.char.workshop.service import (
     WorkshopPackageService,
 )
 from src.ui.features.characters.safety_dialog import EXTERNAL_CODE_SAFETY_NOTICE
-from src.ui.features.characters.workshop_table import WorkshopTable
 from src.ui.foundation.dialogs import FormDialog, exec_owned_dialog
 from src.ui.foundation.i18n import is_chinese, translate
 from src.ui.foundation.info_bar import show_bar
 from src.ui.foundation.widgets.button_styles import LinkButton
 from src.ui.foundation.widgets.cards import SectionCard
 from src.ui.foundation.widgets.search import SearchableComboBox
+from src.ui.foundation.widgets.table import ThemedTable
 from src.ui.icons import resource_icon
 
 
@@ -224,20 +234,50 @@ class WorkshopSlotPreviewCard(Card):
         self.combo_label.set_elided_text("-")
 
 
+class _FinishBeforeExit(QThread):
+    """Keep a durable operation alive through normal application shutdown."""
+
+    def __init__(self, app: QCoreApplication, action: Callable[[], None]):
+        super().__init__(app)
+        self._action = action
+        self.finished.connect(self.deleteLater)
+        app.installEventFilter(self)
+        app.aboutToQuit.connect(self.wait)
+
+    def run(self) -> None:
+        self._action()
+
+    def eventFilter(self, watched, event):
+        if (
+            event.type() == QEvent.Type.Close
+            and isinstance(watched, QWidget)
+            and watched.windowType() == Qt.WindowType.Window
+        ):
+            # Window close handlers can start shutdown before aboutToQuit.
+            self.wait()
+        return False
+
+
 class BackgroundCall(QObject):
     """Run a blocking callable and return its result through Qt signals."""
 
     succeeded = Signal(object)
     failed = Signal(object)
 
-    def __init__(self, action: Callable[[], object], parent=None):
+    def __init__(
+        self, action: Callable[[], object], parent=None, *, finish_before_exit: bool = False
+    ):
         super().__init__(parent)
         self._action = action
+        self._finish_before_exit = finish_before_exit
         self._retired = threading.Event()
         self.destroyed.connect(self._retired.set)
 
     def start(self) -> None:
-        threading.Thread(target=self._run, daemon=True).start()
+        if self._finish_before_exit:
+            _FinishBeforeExit(QCoreApplication.instance(), self._run).start()
+        else:
+            threading.Thread(target=self._run, daemon=True).start()
 
     def retire(self) -> None:
         """Detach a pending result when its page is being rebuilt or closed."""
@@ -573,7 +613,7 @@ class WorkshopDialog(Dialog):
         split_layout.setSpacing(12)
 
         # Left: compact table with user-resizable columns
-        self.table = WorkshopTable(self.panel)
+        self.table = ThemedTable(self.panel)
         self.table.setMinimumHeight(260)
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(
