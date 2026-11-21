@@ -62,7 +62,6 @@ class BaseStaminaTask(NTEOneTimeTask, BaseNTETask):
         daily_activity = None
         mission_box = self.box_of_screen(0.184, 0.652, 0.781, 0.710, name="mission", hcenter=True)
         activity_box = self.box_of_screen(0.184, 0.188, 0.256, 0.255, name="activity", hcenter=True)
-        mission_box.crop_frame
         activity = self.ocr(
             box=activity_box, match=activity_re, frame_processor=gf.isolate_dialog_to_black
         )
