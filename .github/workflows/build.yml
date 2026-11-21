@@ -20,7 +20,7 @@ env:
   SIGN_BUILD: 'false'
   SIGN_SETUP: 'false'
   # Set to the final release API URL after preparing its launcher prerelease.
-  # An older release URL reuses its EXE; empty builds a new EXE.
+  # An older release URL still reuses its EXE; empty builds a new EXE.
   USE_RELEASE: ''
   # fork 没有 Mirror酱 资源, 不触发 mirrorchyan 发布工作流.
   ENABLE_MIRRORCHYAN: 'false'

@@ -255,7 +255,8 @@ config = {
     # 需要更新启动器时重装 full 包, 或把 to_version 改为高于当前的版本并填
     # fork 自己 release 的 zip_url 与 sha256.
     "update_pyappify": {
-        # fork 侧 (上游 v1.5.0 把这里改回 1.2.6/官方 zip, 合并时保留中和值):
+        # fork 侧: 上游每次发版把这里改回官方 zip 与新版本号(v1.5.0 的 1.2.6,
+        # v1.5.9 的 1.2.9), 合并时一律保留 fork 中和值:
         "to_version": "0.0.0",
         "zip_url": "",
         "sha256": "",
